@@ -9,7 +9,11 @@ class Absence extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['stagiaire_id', 'seance_id'];
+    protected $fillable = ['stagiaire_id', 'seance_id', 'type', 'autorisation_suivante'];
+
+    protected $casts = [
+        'autorisation_suivante' => 'boolean',
+    ];
 
     /**
      * L'absence concerne un stagiaire spécifique.

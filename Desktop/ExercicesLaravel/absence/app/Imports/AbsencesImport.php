@@ -5,6 +5,8 @@ namespace App\Imports;
 use App\Models\Absence;
 use App\Models\Stagiaire;
 use App\Models\Seance;
+use App\Models\Groupe;
+use App\Models\Pole;
 use Carbon\Carbon;
 use Maatwebsite\Excel\Concerns\ToModel;
 use Maatwebsite\Excel\Concerns\WithHeadingRow;
@@ -39,32 +41,93 @@ class AbsencesImport implements ToModel, WithHeadingRow
 
         $stagiaire = Stagiaire::where('cef', $cef)->first();
 
-        if (!$stagiaire) {
-            // Si le stagiaire n'est pas trouvé, on le crée à partir de l'Excel.
-            // Remarque: pour être associé à un groupe, on attend au minimum `groupe_id` ou `groupe_nom`.
-            // Si aucune info de groupe n'est fournie, on ignore la ligne.
-            $groupeId = null;
-            if (isset($row['groupe_id']) && !empty($row['groupe_id'])) {
-                $groupeId = (int) $row['groupe_id'];
+        // Résolution du groupe_id
+        $groupeId = null;
+        if (isset($row['groupe_id']) && !empty($row['groupe_id'])) {
+            $groupeId = (int) $row['groupe_id'];
+        } else {
+            // Rechercher par nom de groupe (essaye différents en-têtes possibles)
+            $groupeNom = null;
+            foreach (['groupe_nom', 'nom_groupe', 'groupe', 'classe'] as $key) {
+                if (isset($row[$key]) && !empty($row[$key])) {
+                    $groupeNom = trim((string) $row[$key]);
+                    break;
+                }
             }
 
+            if ($groupeNom) {
+                $groupeObj = Groupe::where('nom', $groupeNom)->first();
+                if ($groupeObj) {
+                    $groupeId = $groupeObj->id;
+                } else {
+                    // Si le groupe n'existe pas encore, on le crée sous le pôle du gestionnaire connecté
+                    $gestionnaire = Auth::user();
+                    $poleId = $gestionnaire ? $gestionnaire->pole_id : null;
+                    if (!$poleId) {
+                        $firstPole = Pole::first();
+                        $poleId = $firstPole ? $firstPole->id : null;
+                    }
+
+                    if ($poleId) {
+                        $groupeObj = Groupe::create([
+                            'nom' => $groupeNom,
+                            'pole_id' => $poleId,
+                        ]);
+                        $groupeId = $groupeObj->id;
+                    }
+                }
+            }
+        }
+
+        // Fallback si aucun groupe résolu pour un nouveau stagiaire
+        if (!$groupeId && !$stagiaire) {
+            $gestionnaire = Auth::user();
+            if ($gestionnaire && $gestionnaire->pole_id) {
+                $firstGroupe = Groupe::where('pole_id', $gestionnaire->pole_id)->first();
+                if ($firstGroupe) {
+                    $groupeId = $firstGroupe->id;
+                }
+            }
+            if (!$groupeId) {
+                $firstGroupe = Groupe::first();
+                if ($firstGroupe) {
+                    $groupeId = $firstGroupe->id;
+                }
+            }
+        }
+
+        if (!$stagiaire) {
+            // Si le stagiaire n'est pas trouvé et qu'on n'a pas pu résoudre de groupe_id, on ignore la ligne
             if (!$groupeId) {
                 return null;
             }
 
+            // Génération de valeurs par défaut saines pour éviter les contraintes NOT NULL de la BDD
+            $nom = isset($row['nom']) && !empty($row['nom']) ? trim((string) $row['nom']) : 'Stagiaire';
+            $prenom = isset($row['prenom']) && !empty($row['prenom']) ? trim((string) $row['prenom']) : 'Nouveau';
+            
+            // Génération d'un email unique
+            $email = isset($row['email']) && !empty($row['email']) ? trim((string) $row['email']) : (strtolower($cef) . '@absence.com');
+            $baseEmail = $email;
+            $counter = 1;
+            while (Stagiaire::where('email', $email)->exists()) {
+                $parts = explode('@', $baseEmail);
+                $email = $parts[0] . $counter . '@' . ($parts[1] ?? 'absence.com');
+                $counter++;
+            }
+
             $stagiaire = new Stagiaire([
                 'cef' => $cef,
-                'nom' => isset($row['nom']) && !empty($row['nom']) ? trim((string) $row['nom']) : null,
-                'prenom' => isset($row['prenom']) && !empty($row['prenom']) ? trim((string) $row['prenom']) : null,
-                'email' => isset($row['email']) && !empty($row['email']) ? trim((string) $row['email']) : null,
+                'nom' => $nom,
+                'prenom' => $prenom,
+                'email' => $email,
                 'image' => isset($row['image']) && !empty($row['image']) ? trim((string) $row['image']) : null,
                 'groupe_id' => $groupeId,
             ]);
 
             $stagiaire->save();
         } else {
-            // 2. (Optionnel) Mettre à jour les infos stagiaire depuis Excel
-            // - noms/champs non utilisés pour l'absence, mais utiles pour l'UI
+            // Mettre à jour les infos du stagiaire existant si présentes dans l'Excel
             if (isset($row['nom']) && !empty($row['nom'])) {
                 $stagiaire->nom = trim((string) $row['nom']);
             }
@@ -72,13 +135,16 @@ class AbsencesImport implements ToModel, WithHeadingRow
                 $stagiaire->prenom = trim((string) $row['prenom']);
             }
             if (isset($row['email']) && !empty($row['email'])) {
-                $stagiaire->email = trim((string) $row['email']);
+                $newEmail = trim((string) $row['email']);
+                if ($newEmail !== $stagiaire->email && !Stagiaire::where('email', $newEmail)->exists()) {
+                    $stagiaire->email = $newEmail;
+                }
             }
             if (isset($row['image']) && !empty($row['image'])) {
                 $stagiaire->image = trim((string) $row['image']);
             }
-            if (isset($row['groupe_id']) && !empty($row['groupe_id'])) {
-                $stagiaire->groupe_id = (int) $row['groupe_id'];
+            if ($groupeId) {
+                $stagiaire->groupe_id = $groupeId;
             }
 
             $stagiaire->save();

@@ -29,91 +29,123 @@
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-5">
+            <!-- Table des Formateurs -->
+            <div class="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col justify-between">
                 <div>
-                    <h2 class="text-base font-bold text-slate-900">Assigner groupes et modules</h2>
-                    <p class="text-xs text-slate-500 mt-1">Choisissez un formateur, ses groupes et les modules qu'il peut assurer.</p>
+                    <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between gap-4">
+                        <div>
+                            <h2 class="text-base font-bold text-slate-900">Affectations Formateurs</h2>
+                            <p class="text-xs text-slate-500 mt-1">Groupes et modules attribués à chaque formateur.</p>
+                        </div>
+                        <a href="{{ route('admin.formateurs.assigner.form') }}" class="bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] transition-all text-white px-3.5 py-2 rounded-xl text-xs font-semibold shadow-sm shrink-0">
+                            Gérer tout
+                        </a>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50/75 border-b border-slate-100 text-slate-400 font-semibold text-[10px] uppercase tracking-wider">
+                                    <th class="px-6 py-3">Formateur</th>
+                                    <th class="px-6 py-3">Groupes & Modules</th>
+                                    <th class="px-6 py-3 text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 text-xs text-slate-700">
+                                @forelse($formateurs as $formateur)
+                                    <tr class="hover:bg-slate-50/50 transition-colors">
+                                        <td class="px-6 py-4">
+                                            <div class="font-bold text-slate-900">{{ $formateur->name }}</div>
+                                            <div class="text-[10px] text-slate-400">{{ $formateur->email }}</div>
+                                        </td>
+                                        <td class="px-6 py-4 space-y-1">
+                                            <div>
+                                                <span class="font-semibold text-slate-500">Groupes :</span> 
+                                                @if($formateur->groupes->isNotEmpty())
+                                                    <span class="text-slate-800">{{ $formateur->groupes->pluck('nom')->join(', ') }}</span>
+                                                @else
+                                                    <span class="text-slate-400 italic">Aucun</span>
+                                                @endif
+                                            </div>
+                                            <div>
+                                                <span class="font-semibold text-slate-500">Modules :</span> 
+                                                @if($formateur->modules->isNotEmpty())
+                                                    <span class="text-slate-800">{{ $formateur->modules->pluck('nom')->join(', ') }}</span>
+                                                @else
+                                                    <span class="text-slate-400 italic">Aucun</span>
+                                                @endif
+                                            </div>
+                                        </td>
+                                        <td class="px-6 py-4 text-right">
+                                            <a href="{{ route('admin.formateurs.assigner.form', ['formateur_id' => $formateur->id]) }}" class="text-indigo-650 hover:text-indigo-850 font-bold transition-all hover:underline">
+                                                Modifier
+                                            </a>
+                                        </td>
+                                    </tr>
+                                @empty
+                                    <tr>
+                                        <td colspan="3" class="px-6 py-8 text-center text-slate-400 italic">Aucun formateur trouvé.</td>
+                                    </tr>
+                                @endforelse
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-
-                <form action="{{ route('admin.formateurs.assigner') }}" method="POST" class="space-y-4">
-                    @csrf
-
-                    <div class="space-y-2">
-                        <label for="formateur_id" class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Formateur</label>
-                        <select name="formateur_id" id="formateur_id" required
-                                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                            <option value="">Choisir un formateur</option>
-                            @foreach($formateurs as $formateur)
-                                <option value="{{ $formateur->id }}">
-                                    {{ $formateur->name }} - Groupes: {{ $formateur->groupes->pluck('nom')->join(', ') ?: 'aucun' }} - Modules: {{ $formateur->modules->pluck('nom')->join(', ') ?: 'aucun' }}
-                                </option>
-                            @endforeach
-                        </select>
-                    </div>
-
-                    <div class="space-y-2">
-                        <label for="groupe_ids" class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Groupes</label>
-                        <select name="groupe_ids[]" id="groupe_ids" multiple
-                                class="w-full min-h-36 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                            @foreach($groupes as $groupe)
-                                <option value="{{ $groupe->id }}">{{ $groupe->nom }} - {{ $groupe->pole->nom }}</option>
-                            @endforeach
-                        </select>
-                    </div>
-
-                    <div class="space-y-2">
-                        <label for="module_ids" class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Modules</label>
-                        <select name="module_ids[]" id="module_ids" multiple
-                                class="w-full min-h-36 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                            @foreach($modules as $module)
-                                <option value="{{ $module->id }}">{{ $module->nom }} - {{ $module->science->nom }}</option>
-                            @endforeach
-                        </select>
-                    </div>
-
-                    <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-sm">
-                        Enregistrer les affectations
-                    </button>
-                </form>
             </div>
 
-            <div class="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-5">
+            <!-- Table des Gestionnaires -->
+            <div class="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col justify-between">
                 <div>
-                    <h2 class="text-base font-bold text-slate-900">Assigner un pole</h2>
-                    <p class="text-xs text-slate-500 mt-1">Associez chaque gestionnaire a son pole de competence.</p>
+                    <div class="px-6 py-5 border-b border-slate-100 flex items-center justify-between gap-4">
+                        <div>
+                            <h2 class="text-base font-bold text-slate-900">Pôles Gestionnaires</h2>
+                            <p class="text-xs text-slate-500 mt-1">Pôles de compétence affectés aux gestionnaires.</p>
+                        </div>
+                        <a href="{{ route('admin.gestionnaires.assigner.form') }}" class="bg-emerald-650 hover:bg-emerald-750 active:scale-[0.98] transition-all text-white px-3.5 py-2 rounded-xl text-xs font-semibold shadow-sm shrink-0">
+                            Gérer tout
+                        </a>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50/75 border-b border-slate-100 text-slate-400 font-semibold text-[10px] uppercase tracking-wider">
+                                    <th class="px-6 py-3">Gestionnaire</th>
+                                    <th class="px-6 py-3">Pôle Affecté</th>
+                                    <th class="px-6 py-3 text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 text-xs text-slate-700">
+                                @forelse($gestionnaires as $gestionnaire)
+                                    <tr class="hover:bg-slate-50/50 transition-colors">
+                                        <td class="px-6 py-4">
+                                            <div class="font-bold text-slate-900">{{ $gestionnaire->name }}</div>
+                                            <div class="text-[10px] text-slate-400">{{ $gestionnaire->email }}</div>
+                                        </td>
+                                        <td class="px-6 py-4">
+                                            @if($gestionnaire->pole)
+                                                <span class="inline-flex px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                                    {{ $gestionnaire->pole->nom }}
+                                                </span>
+                                            @else
+                                                <span class="inline-flex px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-50 text-slate-400 border border-slate-100">
+                                                    Aucun pôle
+                                                </span>
+                                            @endif
+                                        </td>
+                                        <td class="px-6 py-4 text-right">
+                                            <a href="{{ route('admin.gestionnaires.assigner.form', ['gestionnaire_id' => $gestionnaire->id]) }}" class="text-emerald-600 hover:text-emerald-800 font-bold transition-all hover:underline">
+                                                Modifier
+                                            </a>
+                                        </td>
+                                    </tr>
+                                @empty
+                                    <tr>
+                                        <td colspan="3" class="px-6 py-8 text-center text-slate-400 italic">Aucun gestionnaire trouvé.</td>
+                                    </tr>
+                                @endforelse
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-
-                <form action="{{ route('admin.gestionnaires.assigner') }}" method="POST" class="space-y-4">
-                    @csrf
-
-                    <div class="space-y-2">
-                        <label for="gestionnaire_id" class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Gestionnaire</label>
-                        <select name="gestionnaire_id" id="gestionnaire_id" required
-                                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                            <option value="">Choisir un gestionnaire</option>
-                            @foreach($gestionnaires as $gestionnaire)
-                                <option value="{{ $gestionnaire->id }}">
-                                    {{ $gestionnaire->name }} - Pole actuel: {{ $gestionnaire->pole->nom ?? 'aucun' }}
-                                </option>
-                            @endforeach
-                        </select>
-                    </div>
-
-                    <div class="space-y-2">
-                        <label for="pole_id" class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Pole</label>
-                        <select name="pole_id" id="pole_id"
-                                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                            <option value="">Aucun pole</option>
-                            @foreach($poles as $pole)
-                                <option value="{{ $pole->id }}">{{ $pole->nom }}</option>
-                            @endforeach
-                        </select>
-                    </div>
-
-                    <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-sm">
-                        Enregistrer le pole
-                    </button>
-                </form>
             </div>
         </div>
 

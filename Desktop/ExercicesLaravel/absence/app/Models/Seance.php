@@ -9,12 +9,13 @@ class Seance extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['groupe_id', 'formateur_id', 'date_debut', 'duree_heures', 'est_validee', 'science_id', 'module_id'];
+    protected $fillable = ['groupe_id', 'formateur_id', 'date_debut', 'duree_heures', 'est_validee', 'science_id', 'module_id', 'num_seance'];
 
     protected $casts = [
         'date_debut' => 'datetime',
         'est_validee' => 'boolean',
         'duree_heures' => 'float',
+        'num_seance' => 'integer',
     ];
 
     /**

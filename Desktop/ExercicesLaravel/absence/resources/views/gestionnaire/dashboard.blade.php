@@ -137,7 +137,7 @@
                         <tr class="bg-slate-50/75 border-b border-slate-100 text-slate-400 font-semibold text-xs uppercase tracking-wider">
                             <th class="px-6 py-4">Stagiaire</th>
                             <th class="px-6 py-4">Groupe</th>
-                            <th class="px-6 py-4 text-center">Total Absences</th>
+                            <th class="px-6 py-4 text-center">Absences Non Justifiées</th>
                             <th class="px-6 py-4 text-center">Indicateur Décrochage</th>
                             <th class="px-6 py-4">Dernière Absence</th>
                             <th class="px-6 py-4 text-right">Actions</th>
@@ -185,8 +185,8 @@
                                 </td>
                                 <!-- Groupe -->
                                 <td class="px-6 py-4 font-medium">{{ $stagiaire->groupe->nom }}</td>
-                                <!-- Total Absences -->
-                                <td class="px-6 py-4 text-center font-bold text-slate-900">{{ number_format($stagiaire->total_heures_absence, 1) }} h</td>
+                                <!-- Total Absences Non Justifiées -->
+                                <td class="px-6 py-4 text-center font-bold text-slate-900">{{ number_format($stagiaire->heures_absence_non_justifiee, 1) }} h</td>
                                 <!-- Décrochage -->
                                 <td class="px-6 py-4 text-center">
                                     <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border {{ $badgeClass }}">
@@ -199,13 +199,24 @@
                                 <!-- Actions -->
                                 <td class="px-6 py-4 text-right">
                                     <!-- Bouton pour ouvrir l'historique complet -->
+                                    @php
+                                        $sortedAbsences = $stagiaire->absences->sortByDesc(function($abs) {
+                                            return $abs->seance->date_debut;
+                                        });
+                                        $latestAbsenceId = $sortedAbsences->first()?->id;
+                                    @endphp
                                     <button @click="showHistory(
                                         { nom: '{{ addslashes($stagiaire->nom) }}', prenom: '{{ addslashes($stagiaire->prenom) }}', id: {{ $stagiaire->id }} },
-                                        {{ $stagiaire->absences->map(function($abs) {
+                                        {{ $sortedAbsences->map(function($abs) use ($latestAbsenceId) {
                                             return [
                                                 'id' => $abs->id,
-                                                'date' => $abs->seance->date_debut->format('d/m/Y à H:i'),
+                                                'is_latest' => $abs->id === $latestAbsenceId,
+                                                'date' => $abs->seance->date_debut->format('d/m/Y'),
+                                                'heure' => $abs->seance->date_debut->format('H:i'),
                                                 'duree' => $abs->seance->duree_heures,
+                                                'num_seance' => $abs->seance->num_seance,
+                                                'type' => $abs->type,
+                                                'autorisation_suivante' => $abs->autorisation_suivante,
                                                 'justification' => $abs->justification ? [
                                                     'id' => $abs->justification->id,
                                                     'motif' => $abs->justification->motif,
@@ -213,20 +224,16 @@
                                                     'valide' => $abs->justification->est_valide
                                                 ] : null
                                             ];
-                                        })->toJson() }}
+                                        })->values()->toJson() }}
                                     )" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all">
                                         Gérer
                                     </button>
 
-                                    <!-- Bouton Show modules/sciences manquants -->
-                                    <button type="button"
-                                            @click="showMissingModules(
-                                                { nom: '{{ addslashes($stagiaire->nom) }}', prenom: '{{ addslashes($stagiaire->prenom) }}', id: {{ $stagiaire->id }} },
-                                                @js($stagiaire->absences_par_module_recent)
-                                            )"
-                                            class="ml-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all">
+                                    <!-- Bouton Show details page -->
+                                    <a href="{{ route('gestionnaire.stagiaires.show', $stagiaire->id) }}"
+                                       class="ml-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all inline-block">
                                         Show
-                                    </button>
+                                    </a>
                                 </td>
                             </tr>
                         @empty
@@ -340,19 +347,27 @@
                                 <div class="bg-slate-50 p-4 border border-slate-100 rounded-xl space-y-3">
                                     <!-- Entête Absence -->
                                     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                                        <div>
-                                            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Séance du</span>
-                                            <div class="text-sm font-bold text-slate-900" x-text="absence.date + ' (' + parseFloat(absence.duree).toFixed(1) + 'h)'"></div>
+                                        <div class="space-y-1">
+                                            <div class="flex items-center gap-2">
+                                                <span :class="absence.type === 'retard' ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-rose-100 text-rose-800 border-rose-200'" class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase border" x-text="absence.type === 'retard' ? 'Retard' : 'Absence'"></span>
+                                                <span x-show="absence.num_seance" class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200" x-text="'Séance ' + absence.num_seance + ' (' + (absence.num_seance == 1 ? '08:30-11:00' : absence.num_seance == 2 ? '11:00-13:30' : absence.num_seance == 3 ? '13:30-16:00' : '16:00-18:30') + ')'"></span>
+                                            </div>
+                                            <div class="text-xs font-semibold text-slate-400">
+                                                Date : <span class="text-slate-800 font-bold" x-text="absence.date"></span> à <span class="text-slate-800 font-bold" x-text="absence.heure"></span> (Durée : <span x-text="parseFloat(absence.duree).toFixed(1) + 'h'"></span>)
+                                            </div>
                                         </div>
                                         <div>
                                             <!-- Statut justificatif -->
-                                            <span x-if="absence.justification && absence.justification.valide" class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
+                                            <span x-show="absence.justification && absence.justification.valide" class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
                                                 Justifié
                                             </span>
-                                            <span x-if="absence.justification && !absence.justification.valide" class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
+                                            <span x-show="absence.justification && !absence.justification.valide" class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
                                                 En attente de validation
                                             </span>
-                                            <span x-if="!absence.justification" class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-800">
+                                            <span x-show="!absence.justification && absence.autorisation_suivante" class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+                                                Autorisé séance suivante
+                                            </span>
+                                            <span x-show="!absence.justification && !absence.autorisation_suivante" class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-200">
                                                 Non justifié
                                             </span>
                                         </div>
@@ -363,7 +378,7 @@
                                         <div class="text-xs"><strong class="text-slate-600">Motif :</strong> <span class="text-slate-600" x-text="absence.justification?.motif"></span></div>
                                         <div x-show="absence.justification?.fichier" class="text-xs">
                                             <strong class="text-slate-600">Pièce jointe :</strong> 
-                                            <a :href="absence.justification?.fichier" target="_blank" class="text-indigo-600 hover:underline inline-flex items-center gap-1 font-semibold">
+                                            <a :href="absence.justification?.fichier" target="_blank" class="text-indigo-650 hover:underline inline-flex items-center gap-1 font-semibold">
                                                 Ouvrir le document
                                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
                                             </a>
@@ -380,13 +395,24 @@
                                         </div>
                                     </div>
 
-                                    <!-- Formulaire d'ajout de justificatif -->
-                                    <div x-show="!absence.justification">
-                                        <button x-show="openJustifyForm !== absence.id" 
-                                                @click="openJustifyForm = absence.id" 
-                                                class="text-xs text-indigo-650 hover:underline font-semibold flex items-center gap-1">
-                                            + Ajouter un justificatif
-                                        </button>
+                                    <!-- Formulaire d'ajout de justificatif / autorisation -->
+                                    <div x-show="absence.is_latest && !absence.justification" class="space-y-2">
+                                        <div class="flex flex-wrap items-center gap-3">
+                                            <button x-show="openJustifyForm !== absence.id" 
+                                                    @click="openJustifyForm = absence.id" 
+                                                    class="text-xs text-indigo-650 hover:underline font-semibold flex items-center gap-1">
+                                                + Ajouter un justificatif
+                                            </button>
+                                            
+                                            <span x-show="openJustifyForm !== absence.id && !absence.autorisation_suivante" class="text-slate-300">|</span>
+
+                                            <form x-show="openJustifyForm !== absence.id && !absence.autorisation_suivante" :action="'/gestionnaire/absences/' + absence.id + '/autoriser'" method="POST" class="inline">
+                                                @csrf
+                                                <button type="submit" class="text-xs text-emerald-600 hover:underline font-semibold flex items-center gap-1">
+                                                    + Autoriser entrée séance suivante (sans justificatif)
+                                                </button>
+                                            </form>
+                                        </div>
                                         
                                         <!-- Formulaire révélé -->
                                         <div x-show="openJustifyForm === absence.id" class="border-t border-slate-200/50 pt-3 mt-2">
@@ -401,7 +427,7 @@
                                                     <input type="file" name="fichier" class="block w-full text-xs text-slate-500 file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-[11px] file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 file:cursor-pointer">
                                                 </div>
                                                 <div class="flex justify-end gap-2 text-xs pt-1">
-                                                    <button type="button" @click="openJustifyForm = null" class="px-2.5 py-1 text-slate-500">Annuler</button>
+                                                    <button type="button" @click="openJustifyForm = null" class="px-2.5 py-1 text-slate-500 font-semibold">Annuler</button>
                                                     <button type="submit" class="bg-indigo-650 hover:bg-indigo-700 text-white font-semibold px-3 py-1 rounded-lg">Enregistrer</button>
                                                 </div>
                                             </form>

@@ -196,11 +196,113 @@ class GestionnaireController extends Controller
             [
                 'motif' => $request->motif,
                 'fichier_joint' => $fichierChemin ?? ($justificationExistante->fichier_joint ?? null),
-                'est_valide' => false, // Par défaut à valider
+                'est_valide' => true, // Devient justifié directement (validé d'office par le gestionnaire)
             ]
         );
 
-        return redirect()->back()->with('success', 'Justificatif enregistré avec succès (en attente de validation).');
+        // Désactiver la possibilité d'entrer sans justificatif puisque l'absence est déjà justifiée
+        $absence->update([
+            'autorisation_suivante' => false
+        ]);
+
+        return redirect()->back()->with('success', 'Justificatif enregistré et validé avec succès.');
+    }
+
+    /**
+     * Affiche toutes les absences d'un stagiaire (filtrables, avec statistiques).
+     */
+    public function show(Request $request, Stagiaire $stagiaire)
+    {
+        $gestionnaire = Auth::user();
+        if (!$gestionnaire->isGestionnaire()) {
+            abort(403, 'Accès non autorisé.');
+        }
+
+        // Sécurité : vérifier que le stagiaire appartient au pôle du gestionnaire
+        if ($stagiaire->groupe->pole_id !== $gestionnaire->pole_id) {
+            abort(403, 'Accès non autorisé.');
+        }
+
+        // Filtres pour les absences
+        $statusFilter = $request->input('status'); // 'justified', 'unjustified'
+        $searchModule = $request->input('search_module');
+        $dateDebut = $request->input('date_debut');
+        $dateFin = $request->input('date_fin');
+
+        // Construire la requête d'absences du stagiaire
+        $absencesQuery = $stagiaire->absences()->with(['seance.module', 'justification']);
+
+        // Filtrer par statut
+        if ($statusFilter === 'justified') {
+            $absencesQuery->whereHas('justification', function ($q) {
+                $q->where('est_valide', true);
+            });
+        } elseif ($statusFilter === 'unjustified') {
+            $absencesQuery->where(function ($q) {
+                $q->whereDoesntHave('justification')
+                  ->orWhereHas('justification', function ($sq) {
+                      $sq->where('est_valide', false);
+                  });
+            });
+        }
+
+        // Filtrer par module / science
+        if ($searchModule) {
+            $absencesQuery->whereHas('seance.module', function ($q) use ($searchModule) {
+                $q->where('nom', 'like', "%{$searchModule}%");
+            });
+        }
+
+        // Filtrer par plage de date
+        if ($dateDebut) {
+            $absencesQuery->whereHas('seance', function ($q) use ($dateDebut) {
+                $q->whereDate('date_debut', '>=', $dateDebut);
+            });
+        }
+        if ($dateFin) {
+            $absencesQuery->whereHas('seance', function ($q) use ($dateFin) {
+                $q->whereDate('date_debut', '<=', $dateFin);
+            });
+        }
+
+        // Récupérer toutes les absences du stagiaire (pour les durées globales)
+        $allAbsences = $stagiaire->absences()->with(['seance', 'justification'])->get();
+
+        // Calculer les durées totales
+        $totalAbsencesCount = $allAbsences->count();
+        $totalHoursJustified = 0.0;
+        $totalHoursUnjustified = 0.0;
+
+        foreach ($allAbsences as $absence) {
+            $duree = (float)($absence->seance->duree_heures ?? 2.5);
+            $isJustified = $absence->justification && $absence->justification->est_valide;
+            if ($isJustified) {
+                $totalHoursJustified += $duree;
+            } else {
+                $totalHoursUnjustified += $duree;
+            }
+        }
+
+        $totalHours = $totalHoursJustified + $totalHoursUnjustified;
+
+        // Récupérer les absences filtrées pour l'affichage (triées par date début seance)
+        $absences = $absencesQuery->join('seances', 'absences.seance_id', '=', 'seances.id')
+            ->orderBy('seances.date_debut', 'desc')
+            ->select('absences.*')
+            ->get();
+
+        return view('gestionnaire.show', compact(
+            'stagiaire',
+            'absences',
+            'totalAbsencesCount',
+            'totalHoursJustified',
+            'totalHoursUnjustified',
+            'totalHours',
+            'statusFilter',
+            'searchModule',
+            'dateDebut',
+            'dateFin'
+        ));
     }
 
     /**
@@ -220,6 +322,25 @@ class GestionnaireController extends Controller
         ]);
 
         return redirect()->back()->with('success', 'Le justificatif a été validé.');
+    }
+
+    /**
+     * Permet au stagiaire d'entrer à la séance suivante sans justificatif d'absence.
+     */
+    public function autoriserSeanceSuivante(Absence $absence)
+    {
+        $gestionnaire = Auth::user();
+
+        // Sécurité : Vérifier le pôle
+        if ($absence->stagiaire->groupe->pole_id !== $gestionnaire->pole_id) {
+            abort(403, 'Action non autorisée.');
+        }
+
+        $absence->update([
+            'autorisation_suivante' => true
+        ]);
+
+        return redirect()->back()->with('success', 'Le stagiaire a été autorisé à entrer à la séance suivante sans justification.');
     }
 
     /**

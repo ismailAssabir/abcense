@@ -51,6 +51,58 @@ class AdminController extends Controller
         ]);
     }
 
+    public function showAssignerFormateur(Request $request)
+    {
+        $this->authorizeAdmin();
+
+        $formateurs = User::where('role', 'formateur')
+            ->with(['groupes', 'modules'])
+            ->orderBy('name')
+            ->get();
+
+        $formateursData = $formateurs->mapWithKeys(function ($formateur) {
+            return [$formateur->id => [
+                'id' => $formateur->id,
+                'name' => $formateur->name,
+                'groupe_ids' => $formateur->groupes->pluck('id')->toArray(),
+                'module_ids' => $formateur->modules->pluck('id')->toArray(),
+            ]];
+        });
+
+        return view('admin.assign_formateur', [
+            'formateurs' => $formateurs,
+            'formateursData' => $formateursData,
+            'groupes' => Groupe::with('pole')->orderBy('nom')->get(),
+            'modules' => Module::with('science')->orderBy('nom')->get(),
+            'selectedFormateurId' => $request->query('formateur_id'),
+        ]);
+    }
+
+    public function showAssignerGestionnaire(Request $request)
+    {
+        $this->authorizeAdmin();
+
+        $gestionnaires = User::where('role', 'gestionnaire')
+            ->with('pole')
+            ->orderBy('name')
+            ->get();
+
+        $gestionnairesData = $gestionnaires->mapWithKeys(function ($gestionnaire) {
+            return [$gestionnaire->id => [
+                'id' => $gestionnaire->id,
+                'name' => $gestionnaire->name,
+                'pole_id' => $gestionnaire->pole_id,
+            ]];
+        });
+
+        return view('admin.assign_gestionnaire', [
+            'gestionnaires' => $gestionnaires,
+            'gestionnairesData' => $gestionnairesData,
+            'poles' => Pole::orderBy('nom')->get(),
+            'selectedGestionnaireId' => $request->query('gestionnaire_id'),
+        ]);
+    }
+
     public function assignerFormateur(Request $request)
     {
         $this->authorizeAdmin();

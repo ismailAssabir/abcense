@@ -42,6 +42,35 @@ class Stagiaire extends Model
     }
 
     /**
+     * Total des heures d'absence non justifiées.
+     */
+    public function getHeuresAbsenceNonJustifieeAttribute(): float
+    {
+        return (float) $this->absences()
+            ->where(function ($query) {
+                $query->whereDoesntHave('justification')
+                    ->orWhereHas('justification', function ($q) {
+                        $q->where('est_valide', false);
+                    });
+            })
+            ->join('seances', 'absences.seance_id', '=', 'seances.id')
+            ->sum('seances.duree_heures');
+    }
+
+    /**
+     * Total des heures d'absence justifiées.
+     */
+    public function getHeuresAbsenceJustifieeAttribute(): float
+    {
+        return (float) $this->absences()
+            ->whereHas('justification', function ($q) {
+                $q->where('est_valide', true);
+            })
+            ->join('seances', 'absences.seance_id', '=', 'seances.id')
+            ->sum('seances.duree_heures');
+    }
+
+    /**
      * 2. Indicateur de Décrochage : Nombre d'heures d'absence successives.
      * Analyse l'historique des séances validées de son groupe, du plus récent au plus ancien.
      * S'arrête à la première séance où le stagiaire n'était pas absent (considéré présent).

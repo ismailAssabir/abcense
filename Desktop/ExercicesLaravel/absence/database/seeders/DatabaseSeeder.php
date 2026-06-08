@@ -125,16 +125,30 @@ class DatabaseSeeder extends Seeder
                 'science_id' => $module?->science_id,
                 'module_id' => $module?->id,
                 'date_debut' => $dateDebut,
+                'num_seance' => 1, // Toutes les séances de base sont à 8h30 (Séance 1)
                 'duree_heures' => 2.50,
                 'est_validee' => true, // Validées par défaut pour le test
             ]);
         }
 
+        // Créer une Séance 2 pour aujourd'hui (pour tester le contrôle d'accès en séance 2/3)
+        $dateDebutSeance2 = Carbon::now()->setTime(11, 0, 0);
+        $seance2Today = Seance::create([
+            'groupe_id' => $dev102->id,
+            'formateur_id' => $formateurDupont->id,
+            'science_id' => $seances[4]->science_id,
+            'module_id' => $seances[4]->module_id,
+            'date_debut' => $dateDebutSeance2,
+            'num_seance' => 2,
+            'duree_heures' => 2.50,
+            'est_validee' => true,
+        ]);
+
         // Séance 0: Il y a 4 jours
         // Séance 1: Il y a 3 jours
         // Séance 2: Il y a 2 jours
         // Séance 3: Il y a 1 jour (Hier)
-        // Séance 4: Aujourd'hui
+        // Séance 4: Aujourd'hui (Séance 1)
 
         // 7. Création des Absences pour tester le décrochage :
         
@@ -148,12 +162,13 @@ class DatabaseSeeder extends Seeder
         Absence::create(['stagiaire_id' => $sofia->id, 'seance_id' => $seances[3]->id]);
         Absence::create(['stagiaire_id' => $sofia->id, 'seance_id' => $seances[4]->id]);
 
-        // * Omar CHERRADI : Absent aux 3 dernières séances (Séance 2, Séance 3 et Séance 4)
-        // -> total_heures_absence = 7.5h
-        // -> heures_absences_successives = 7.5h (Rouge / Décrochage critique)
+        // * Omar CHERRADI : Absent aux 3 dernières séances (Séance 2, Séance 3 et Séance 4) + la séance 2 d'aujourd'hui
+        // -> total_heures_absence = 10h
+        // -> heures_absences_successives = 10h (Rouge / Décrochage critique)
         Absence::create(['stagiaire_id' => $omar->id, 'seance_id' => $seances[2]->id]);
         Absence::create(['stagiaire_id' => $omar->id, 'seance_id' => $seances[3]->id]);
         Absence::create(['stagiaire_id' => $omar->id, 'seance_id' => $seances[4]->id]);
+        Absence::create(['stagiaire_id' => $omar->id, 'seance_id' => $seance2Today->id]);
 
         // * Kenza DAOUDI : Absente à la Séance 0 (il y a 4 jours) et Séance 2 (il y a 2 jours), 
         // mais PRÉSENTE à la Séance 3 (Hier) et Séance 4 (Aujourd'hui).

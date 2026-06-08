@@ -2,108 +2,237 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
 use App\Models\Groupe;
+use App\Models\Module;
 use App\Models\Seance;
 use App\Models\Absence;
-use App\Models\Module;
-use App\Models\Science;
+use App\Models\Stagiaire;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class FormateurController extends Controller
 {
     /**
-     * Affiche l'écran de saisie rapide de l'appel pour le formateur connecté.
+     * 1. Afficher l'interface de saisie des absences pour le formateur connecté.
+     */
+    /**
+     * 1. Afficher l'interface de saisie des absences pour le formateur connecté.
      */
     public function index(Request $request)
     {
-        $formateur = Auth::user();
+        $formateur = Auth::user(); 
+        $groupes = $formateur->groupes; 
+        
+        $groupeId = $request->input('groupe_id');
+        $date = $request->input('date', now()->format('Y-m-d'));
+        $cef = $request->input('cef');
 
-        // 1. Récupérer uniquement les groupes assignés à ce formateur
-        $groupes = $formateur->groupes;
+        // If no group is explicitly selected but there are groups, default to the first group
+        if (!$groupeId && $groupes->isNotEmpty()) {
+            $groupeId = $groupes->first()->id;
+        }
 
-        // 2. Sélectionner le groupe demandé (ou le premier par défaut)
-        $selectedGroupeId = $request->input('groupe_id');
-        $selectedGroupe = $selectedGroupeId
-            ? $groupes->firstWhere('id', $selectedGroupeId)
-            : $groupes->first();
+        $groupe = null;
+        $stagiaires = collect();
+        $modules = collect();
 
-        // 3. Récupérer les stagiaires de ce groupe
-        $stagiaires = $selectedGroupe
-            ? $selectedGroupe->stagiaires()->orderBy('nom')->orderBy('prenom')->get()
-            : collect();
+        if ($groupeId) {
+            $groupe = Groupe::find($groupeId);
+            if ($groupe) {
+                $stagiairesQuery = Stagiaire::where('groupe_id', $groupeId);
+                if ($cef) {
+                    $stagiairesQuery->where('cef', 'like', '%' . $cef . '%');
+                }
+                $stagiaires = $stagiairesQuery->orderBy('nom', 'asc')->get();
 
-        // 4. Sciences + modules disponibles pour ce groupe (programme attendu)
-        $sciences = $selectedGroupe ? $selectedGroupe->sciences()->orderBy('nom')->get() : collect();
-        $modules = $selectedGroupe ? $selectedGroupe->modules()->with('science')->orderBy('nom')->get() : collect();
+                // Fetch modules for this group
+                $modules = Module::whereHas('groupes', function($query) use ($groupeId) {
+                    $query->where('groupe_id', $groupeId);
+                })->get();
+            }
+        }
 
-        $selectedScienceId = $request->input('science_id');
-        $filteredModules = $selectedScienceId
-            ? $modules->where('science_id', $selectedScienceId)->values()
-            : $modules;
+        // Calculate suggestedSessionNum
+        $suggestedSessionNum = 1;
+        if ($groupeId) {
+            $recordedSessions = Seance::where('groupe_id', $groupeId)
+                ->where('formateur_id', $formateur->id)
+                ->whereDate('date_debut', $date)
+                ->pluck('num_seance')
+                ->toArray();
+
+            for ($i = 1; $i <= 4; $i++) {
+                if (!in_array($i, $recordedSessions)) {
+                    $suggestedSessionNum = $i;
+                    break;
+                }
+            }
+        }
+
+        // Calculate previousSessionStatuses
+        $previousSessionStatuses = [
+            1 => [],
+            2 => [],
+            3 => [],
+            4 => []
+        ];
+
+        if ($groupeId) {
+            for ($s = 2; $s <= 4; $s++) {
+                $prevSessionNum = $s - 1;
+                // Find previous seance
+                $prevSeance = Seance::where('groupe_id', $groupeId)
+                    ->where('formateur_id', $formateur->id)
+                    ->whereDate('date_debut', $date)
+                    ->where('num_seance', $prevSessionNum)
+                    ->first();
+
+                if ($prevSeance) {
+                    foreach ($prevSeance->absences as $absence) {
+                        // Check if justified
+                        $isJustified = $absence->justification && $absence->justification->est_valide;
+                        // Check if permitted
+                        $isPermitted = $absence->autorisation_suivante;
+
+                        if (!$isJustified && !$isPermitted) {
+                            $previousSessionStatuses[$s][$absence->stagiaire_id] = $absence->type;
+                        }
+                    }
+                }
+            }
+        }
 
         return view('formateur.appel', compact(
             'groupes',
-            'selectedGroupe',
+            'groupe',
+            'date',
             'stagiaires',
-            'sciences',
             'modules',
-            'filteredModules',
-            'selectedScienceId'
+            'suggestedSessionNum',
+            'previousSessionStatuses',
+            'cef'
         ));
     }
 
     /**
-     * Valide l'appel pour une séance et enregistre les absences.
+     * L'interface de saisie des absences (obsolète mais préservée si besoin)
+     */
+    public function create()
+    {
+        $formateur = Auth::user(); 
+        $groupes = $formateur->groupes; 
+
+        return view('absences.saisie', compact('groupes'));
+    }
+
+    /**
+     * Enregistrer la séance de 2.5 heures et les présences/absences/retards.
      */
     public function validerAppel(Request $request)
     {
+        // Validation stricte du formulaire
         $request->validate([
-            'groupe_id' => 'required|exists:groupes,id',
-            'science_id' => 'nullable|exists:sciences,id',
-            'module_id' => 'nullable|exists:modules,id',
-            'date_debut' => 'required|date',
-            'duree_heures' => 'required|numeric|min:0.5',
+            'groupe_id'  => 'required|exists:groupes,id',
+            'date'       => 'required|date_format:Y-m-d',
+            'num_seance' => 'required|in:1,2,3,4',
+            'module_id'  => 'nullable|exists:modules,id',
+            'statuses'   => 'required|array',
+            'statuses.*' => 'required|in:present,absent,retard'
         ]);
 
-        $formateur = Auth::user();
+        // Définition automatique des horaires selon la séance choisie (Durée: 2,5 heures)
+        $dateJour = $request->date;
+        $time = '';
 
-        // Vérifier que le formateur est bien assigné à ce groupe (sécurité)
-        if (!$formateur->groupes()->where('groupes.id', $request->groupe_id)->exists()) {
-            return redirect()->back()->with('error', 'Vous n\'êtes pas autorisé à faire l\'appel pour ce groupe.');
+        switch ($request->num_seance) {
+            case 1:
+            case '1':
+                $time = '08:30:00';
+                break;
+            case 2:
+            case '2':
+                $time = '11:00:00';
+                break;
+            case 3:
+            case '3':
+                $time = '13:30:00';
+                break;
+            case 4:
+            case '4':
+                $time = '16:00:00';
+                break;
+            default:
+                $time = '08:30:00';
         }
+        $dateDebut = $dateJour . ' ' . $time;
 
-        // 1. Créer la séance validée
-        $seance = Seance::create([
-            'groupe_id' => $request->groupe_id,
-            'formateur_id' => $formateur->id,
-            'science_id' => $request->input('science_id'),
-            'module_id' => $request->input('module_id'),
-            'date_debut' => Carbon::parse($request->date_debut),
-            'duree_heures' => $request->duree_heures,
-            'est_validee' => true, // Validée directement
-        ]);
+        // Utilisation d'une Transaction Database pour s'assurer que tout s'enregistre sans erreur
+        DB::transaction(function () use ($request, $dateDebut) {
+            
+            // Supprimer la séance existante pour éviter les doublons lors d'une resoumission
+            Seance::where('groupe_id', $request->groupe_id)
+                ->where('date_debut', $dateDebut)
+                ->where('num_seance', $request->num_seance)
+                ->delete();
 
-        // 2. Récupérer le tableau des IDs des stagiaires ABSENTS
-        // (Ceux qui n'ont pas été cochés "présent" dans le formulaire)
-        // Le formulaire envoie la liste des présents, on en déduit les absents.
-        $tousStagiairesIds = Groupe::find($request->groupe_id)->stagiaires()->pluck('id')->toArray();
-        $presentsIds = $request->input('presents', []); // Tableau des IDs cochés présents
-
-        // Les absents sont ceux qui appartiennent au groupe mais ne sont pas dans la liste des présents
-        $absentsIds = array_diff($tousStagiairesIds, $presentsIds);
-
-        // Enregistrer les absences
-        foreach ($absentsIds as $stagiaireId) {
-            Absence::create([
-                'stagiaire_id' => $stagiaireId,
-                'seance_id' => $seance->id,
+            // a. Création de la séance
+            $seance = Seance::create([
+                'module_id'    => $request->module_id ?: null,
+                'groupe_id'    => $request->groupe_id,
+                'formateur_id' => Auth::id(), // ID du formateur authentifié
+                'date_debut'   => $dateDebut,
+                'duree_heures' => 2.50,
+                'est_validee'  => true,
+                'num_seance'   => $request->num_seance,
             ]);
+
+            // b. Enregistrement des absences et retards
+            foreach ($request->statuses as $stagiaireId => $status) {
+                if ($status === 'absent' || $status === 'retard') {
+                    Absence::create([
+                        'seance_id'             => $seance->id,
+                        'stagiaire_id'          => $stagiaireId,
+                        'type'                  => $status === 'absent' ? 'absence' : $status, // 'absence' ou 'retard'
+                        'autorisation_suivante' => false
+                    ]);
+                }
+            }
+        });
+
+        $nextSeance = (int)$request->num_seance + 1;
+        if ($nextSeance > 4) {
+            $nextSeance = 4;
         }
 
-        return redirect()->route('formateur.dashboard', ['groupe_id' => $request->groupe_id])
-            ->with('success', 'L\'appel a été enregistré avec succès. ' . count($absentsIds) . ' absence(s) notée(s).');
+        return redirect()->route('formateur.dashboard', [
+            'groupe_id'  => $request->groupe_id,
+            'date'       => $request->date,
+            'num_seance' => $nextSeance
+        ])->with('success', 'L\'appel a été enregistré avec succès ! (2.5 heures comptabilisées)');
+    }
+
+    /**
+     * 3. [API] Retourne les modules d'un groupe spécifique pour le fetch JavaScript.
+     */
+    public function getModulesByGroupe($groupeId)
+    {
+        $modules = Module::whereHas('groupes', function($query) use ($groupeId) {
+            $query->where('groupe_id', $groupeId);
+        })->get(['id', 'nom']);
+
+        return response()->json($modules);
+    }
+
+    /**
+     * 4. [API] Retourne les stagiaires d'un groupe spécifique pour le fetch JavaScript.
+     */
+    public function getStagiairesByGroupe($groupeId)
+    {
+        $stagiaires = Stagiaire::where('groupe_id', $groupeId)
+            ->orderBy('nom', 'asc')
+            ->get(['id', 'nom', 'prenom']);
+
+        return response()->json($stagiaires);
     }
 }
